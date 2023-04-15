@@ -1,0 +1,225 @@
+// import express from "express";
+// import mongoose from "mongoose";
+// import multer from "multer";
+// import cors from "cors";
+// import path, { resolve } from "path";
+// import bodyParser from "body-parser";
+const express = require("express");
+const mongoose = require("mongoose");
+const multer = require("multer");
+const cors = require("cors");
+const path = require("path");
+const bodyParser = require("body-parser");
+const session = require("express-session");
+const passport = require("passport");
+const passportLocalMongoose = require("passport-local-mongoose");
+
+//app config
+const port = 9000;
+const app = express();
+
+//app use
+app.use(cors());
+app.use(
+  bodyParser.urlencoded({
+    extended: true,
+  })
+);
+app.use(express.json());
+app.use("/uploads", express.static(path.join(path.resolve(), "uploads")));
+// console.log(path.resolve());
+app.use(
+  session({
+    secret: "test one sec",
+    resave: false,
+    saveUninitialized: false,
+  })
+);
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+//Storage for Assets
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads");
+  },
+  filename: (req, file, cb) => {
+    cb(null, file.originalname);
+  },
+});
+
+const upload = multer({ storage: storage });
+
+//DB Config
+mongoose
+  .connect("mongodb://localhost/musickDBase", {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    useCreateIndex: true,
+    useFindAndModify: true,
+  })
+  .then(() => {
+    console.log("connected to the Database");
+  });
+
+//COLLECTIONS
+
+const artistSchema = new mongoose.Schema({
+  fullName: String,
+  email: String,
+  userName: String,
+  password: String,
+  profilePhoto: String,
+  coverPhoto: String,
+  dateOfBirth: String,
+  songs: { type: [String], default: [], requireed: false },
+  albums: { type: [String], default: [], required: false },
+  fans: { type: Number, default: 0, required: false },
+});
+
+const songSchema = new mongoose.Schema({
+  songName: String,
+  artistName: String,
+  albumName: String,
+  year: Number,
+  email: String,
+  coverPhoto: String,
+  likes: { type: Number, required: false, default: 0 },
+});
+
+const albumSchema = new mongoose.Schema({
+  albumName: String,
+  artistName: String,
+  email: String,
+  likes: { type: Number, required: false, default: 0 },
+  songs: { type: [String] },
+  coverPhoto: String,
+});
+
+const Artist = mongoose.model("Artist", artistSchema);
+const Song = mongoose.model("Song", songSchema);
+const Album = mongoose.model("Album", albumSchema);
+
+//User Authentication Schema
+const userSchema = new mongoose.Schema({
+  username: String,
+  password: String,
+});
+
+userSchema.plugin(passportLocalMongoose);
+
+const User = new mongoose.model("User", userSchema);
+
+passport.use(User.createStrategy());
+
+passport.serializeUser(function (user, done) {
+  done(null, user.id);
+});
+
+passport.deserializeUser(function (id, done) {
+  User.findById(id, function (err, user) {
+    done(err, user);
+  });
+});
+
+//Register for only authentication
+app.post("/auth/register", (req, res) => {
+  User.register(
+    { username: req.body.username },
+    req.body.password,
+    (err, user) => {
+      if (err) {
+        console.log(err);
+      } else {
+        passport.authenticate("local")(req, res, function () {
+          console.log("user Authenticated");
+          res.status(201).send("Authenticated");
+        });
+      }
+    }
+  );
+});
+
+//Login for only authentication
+app.post("/auth/login", function (req, res) {
+  console.log(req.body);
+  const user = new User({
+    username: req.body.username,
+    password: req.body.password,
+  });
+
+  req.login(user, function (err) {
+    if (err) {
+      console.log(err);
+    } else {
+      passport.authenticate("local")(req, res, function () {
+        console.log("User authenticated when login");
+        res.redirect("/test/auth");
+      });
+    }
+  });
+});
+
+//Register with all detaiols
+app.post("/user/register", upload.array("userImages"), (req, res) => {
+  console.log(req.body);
+  Artist.find({ userName: req.body.userName }, (err, existingUser) => {
+    if (err) {
+      console.log(err);
+    } else {
+      if (existingUser.length === 0) {
+        const newUser = new Artist({
+          fullName: req.body.fullName,
+          userName: req.body.userName,
+          email: req.body.email,
+          password: req.body.password,
+          dateOfBirth: req.body.dateOfBirth,
+          profilePhoto: req.files[0].path,
+          coverPhoto: req.files[1].path,
+        });
+        newUser.save().then(() => {
+          res.status(201).send("User Registered Successfully!");
+        });
+      } else {
+        res.status(208).send("Username is already being used");
+      }
+    }
+  });
+});
+
+//Login with all details
+app.get("/user/login", (req, res) => {
+  Artist.find({ userName: req.body.userName }, (err, foundArtist) => {
+    if (err) {
+      console.log(err);
+    } else {
+      if (foundArtist.length === 0) {
+        res.status(208).send("User name doesn't exist");
+      } else {
+        if (foundArtist.password === req.body.password) {
+          res.status(201).send(foundArtist);
+        } else {
+          res.status(208).send("Username and password don't match");
+        }
+      }
+    }
+  });
+});
+
+// TESTS
+//test route for auth check
+app.get("/test/auth", (req, res) => {
+  if (req.isAuthenticated()) {
+    console.log("is authenticated when accessing");
+    res.send("is authenticated when accessing");
+  } else {
+    console.log("not authenticacted when accessing");
+    res.send("not authenticacted when accessing");
+  }
+});
+
+//app listen
+app.listen(port, () => {
+  console.log(`server started on port ${port}`);
+});
